@@ -9,10 +9,13 @@
  * Set the three DOCUTRANSLATE_TEST_LLM_* variables to also run a real
  * translation:
  *
- *   DOCUTRANSLATE_TEST_LLM_BASE_URL=https://api.deepseek.com/v1 \
- *   DOCUTRANSLATE_TEST_LLM_API_KEY=sk-... \
- *   DOCUTRANSLATE_TEST_LLM_MODEL_ID=deepseek-chat \
+ *   DOCUTRANSLATE_TEST_LLM_BASE_URL=http://127.0.0.1:8888/v1 \
+ *   DOCUTRANSLATE_TEST_LLM_API_KEY=local \
+ *   DOCUTRANSLATE_TEST_LLM_MODEL_ID=your-model \
  *   node scripts/live-smoke.mjs
+ *
+ * `DOCUTRANSLATE_TEST_LLM_THINKING` overrides the thinking policy (default
+ * `enable`, which DocuTranslate maps to `chat_template_kwargs` for DeepSeek-V4).
  */
 import { DocuTranslateClient } from '../lib/client.js'
 
@@ -42,7 +45,7 @@ async function wait(taskId, taskTimeoutMs = 300_000) {
   }
 }
 
-const source = `# Live smoke\n\nHello from dsh-document-translate at ${new Date().toISOString()}.\n\n- alpha\n- beta\n`
+const source = `# 现场验证\n\n这是 dsh-document-translate 在 ${new Date().toISOString()} 生成的测试文档。\n\n- 第一项\n- 第二项\n`
 const bytes = new TextEncoder().encode(source)
 
 // Phase 1: no-LLM parse path.
@@ -59,7 +62,7 @@ console.log(`downloads: ${JSON.stringify(Object.keys(parseStatus.downloads))}`)
 if (parseStatus.download_ready) {
   const markdown = await client.download(parseId, 'markdown')
   console.log(`markdown bytes: ${markdown.bytes.byteLength}, filename=${markdown.filename ?? '(none)'}`)
-  console.log(String.fromCharCode(...markdown.bytes.slice(0, 240)))
+  console.log(new TextDecoder().decode(markdown.bytes.slice(0, 240)))
 }
 await client.release(parseId)
 console.log(`released ${parseId}`)
@@ -76,6 +79,7 @@ if (llmBaseURL && llmApiKey && llmModelId) {
     base_url: llmBaseURL,
     api_key: llmApiKey,
     model_id: llmModelId,
+    thinking: process.env.DOCUTRANSLATE_TEST_LLM_THINKING ?? 'enable',
     convert_engine: 'identity',
   })
   const status = await wait(translateId)
@@ -83,7 +87,7 @@ if (llmBaseURL && llmApiKey && llmModelId) {
   if (status.download_ready) {
     const translated = await client.download(translateId, 'markdown')
     console.log(`translated markdown bytes: ${translated.bytes.byteLength}`)
-    console.log(String.fromCharCode(...translated.bytes.slice(0, 400)))
+    console.log(new TextDecoder().decode(translated.bytes.slice(0, 400)))
   }
   await client.release(translateId)
 } else {

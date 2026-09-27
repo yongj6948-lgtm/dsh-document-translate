@@ -1,8 +1,23 @@
 # dsh-document-translate bundle patch.
 #
 # Registers the DocuTranslate-backed document translation tool. The row's
-# `config` is intentionally minimal; every deployment-tunable value has a
-# default and can be overridden from a profile or a later patch layer.
+# `config` carries this deployment's defaults; a profile or a later patch layer
+# may replace any value (a patch replaces the whole row config, so restate the
+# keys you keep).
+#
+# LLM config follows the local pi-agent provider `vllm`
+# (http://127.0.0.1:8888/v1, model your-model, thinking low):
+# DocuTranslate only accepts `default | enable | disable`, and `enable` selects
+# the DeepSeek-V4 `chat_template_kwargs` branch, so "low" maps to `enable`.
+# The API key is not stored here; the plugin resolves `DOCUTRANSLATE_LLM_API_KEY`
+# through the Harness credential seam (falling back to the launch environment).
 - insert:
     - id: document-translate
       name: 'dsh-document-translate'
+      config:
+        baseURL: 'http://127.0.0.1:8010'
+        targetLang: '简体中文'
+        llmBaseURL: 'http://127.0.0.1:8888/v1'
+        llmModelId: 'your-model'
+        llmThinking: enable
+        llmApiKeyEnv: 'DOCUTRANSLATE_LLM_API_KEY'

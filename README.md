@@ -28,9 +28,10 @@ Workflows: `auto`, `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub
     targetLang: '简体中文'
     insertMode: replace        # replace | append | prepend
     # A-side LLM parameters; leave unset to use the service's own defaults (B-side).
-    llmBaseURL: 'https://api.deepseek.com/v1'
-    llmModelId: 'deepseek-chat'
-    llmProvider: deepseek
+    # Defaults follow the local pi-agent `vllm` provider.
+    llmBaseURL: 'http://127.0.0.1:8888/v1'
+    llmModelId: 'your-model'
+    llmThinking: enable
     llmApiKeyEnv: DOCUTRANSLATE_LLM_API_KEY
 ```
 
@@ -52,10 +53,14 @@ Workflows: `auto`, `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub
 ### LLM configuration (A+B)
 
 - **A** — the plugin resolves `llmApiKeyEnv` through the Harness credential seam and forwards
-  `base_url` / `model_id` / `api_key` per request.
+  `base_url` / `model_id` / `api_key` per request. Store the local vLLM key once
+  (`DOCUTRANSLATE_LLM_API_KEY=local`) or leave it to the launch environment.
 - **B** — when those fields are unset, DocuTranslate falls back to its own `.env`
   (`DOCUTRANSLATE_BASE_URL` / `API_KEY` / `MODEL_ID`). Keep `DOCUTRANSLATE_ENV_FORCE_OVERRIDE=false`
   so the plugin's values win when present.
+
+> DocuTranslate accepts only `thinking: default | enable | disable`. The pi-agent `low` level maps to
+> `enable`, which selects the DeepSeek-V4 `chat_template_kwargs` branch.
 
 ## Development
 
