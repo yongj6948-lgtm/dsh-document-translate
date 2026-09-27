@@ -1,0 +1,8 @@
+# dsh-document-translate bundle patch.
+#
+# Registers the DocuTranslate-backed document translation tool. The row's
+# `config` is intentionally minimal; every deployment-tunable value has a
+# default and can be overridden from a profile or a later patch layer.
+- insert:
+    - id: document-translate
+      name: 'dsh-document-translate'
