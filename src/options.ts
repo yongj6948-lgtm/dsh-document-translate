@@ -40,6 +40,9 @@ export const DEFAULT_POLL_INTERVAL_MS = 2_000
 /** Default credential reference holding the translation LLM's API key. */
 export const DEFAULT_LLM_API_KEY_ENV = 'DOCUTRANSLATE_LLM_API_KEY'
 
+/** Default subagent provider used for the automatic review child. */
+export const DEFAULT_SUBAGENT_PROVIDER = 'spawn'
+
 /** Plugin configuration; every field is a live reference the settings page can edit. */
 export interface Config {
   /** DocuTranslate service root. Falls back to `$DOCUTRANSLATE_SERVICE_URL`. */
@@ -66,6 +69,14 @@ export interface Config {
   llmProvider: Volatile<string | undefined>
   /** Credential reference holding the translation LLM API key. */
   llmApiKeyEnv: Volatile<string | undefined>
+  /** Run the automatic review before returning. Defaults to `true`. */
+  review: Volatile<boolean>
+  /** Subagent provider that runs the review child. Defaults to `spawn`. */
+  subagentProvider: Volatile<string | undefined>
+  /** LLM provider route for the review child; unset inherits the caller's. */
+  reviewProvider: Volatile<string | undefined>
+  /** Review model id; unset inherits the caller's. */
+  reviewModel: Volatile<string | undefined>
   /** Document conversion engine for PDF/Markdown inputs. */
   convertEngine: Volatile<ConvertEngine | undefined>
   /** Directory for translated output; empty writes beside the source file. */
@@ -86,6 +97,10 @@ export const Config = z.object({
   llmModelId: z.string().volatile(),
   llmProvider: z.string().volatile(),
   llmApiKeyEnv: z.string().volatile(),
+  review: z.boolean().default(true).volatile(),
+  subagentProvider: z.string().volatile(),
+  reviewProvider: z.string().volatile(),
+  reviewModel: z.string().volatile(),
   convertEngine: z.union(CONVERT_ENGINES).volatile(),
   outputDir: z.string().volatile(),
 })
@@ -104,6 +119,14 @@ export interface ResolvedOptions {
   readonly llmModelId?: string
   readonly llmProvider?: string
   readonly llmApiKeyEnv: string
+  /** Whether the automatic review runs before the tool returns. */
+  readonly review: boolean
+  /** Subagent provider name for the review child. */
+  readonly subagentProvider: string
+  /** LLM provider route for the review child, when overridden. */
+  readonly reviewProvider?: string
+  /** Review model id, when overridden. */
+  readonly reviewModel?: string
   readonly convertEngine?: ConvertEngine
   /** Resolved output directory; empty means "beside the source file". */
   readonly outputDir: string
@@ -139,6 +162,10 @@ export function resolveOptions(ctx: Context, config: Config): ResolvedOptions {
     ...pick('llmModelId', config.llmModelId.get()),
     ...pick('llmProvider', config.llmProvider.get()),
     llmApiKeyEnv: config.llmApiKeyEnv.get() ?? DEFAULT_LLM_API_KEY_ENV,
+    review: config.review.get(),
+    subagentProvider: config.subagentProvider.get() ?? DEFAULT_SUBAGENT_PROVIDER,
+    ...pick('reviewProvider', config.reviewProvider.get()),
+    ...pick('reviewModel', config.reviewModel.get()),
     ...pick('convertEngine', config.convertEngine.get()),
     outputDir: config.outputDir.get() ?? '',
   }

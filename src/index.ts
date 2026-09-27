@@ -21,6 +21,12 @@ export { Config }
 export { resolveOptions }
 export { DocuTranslateClient, DocuTranslateError } from './client.js'
 export type { ClientOptions, DocuTranslateErrorCode, DownloadedFile, TaskId } from './client.js'
+export { extractMarkdown } from './extract.js'
+export type { ExtractMethod, ExtractedText, PdfFacts } from './extract.js'
+export { alignBlocks, renderCompareHtml, splitBlocks } from './compare.js'
+export type { CompareBlock, ComparePair, ComparePageInput } from './compare.js'
+export { REVIEW_OUTPUT_SCHEMA, parseReview, runReview } from './review.js'
+export type { ReviewMaterial } from './review.js'
 export type { Config as TranslateConfig, ResolvedOptions } from './options.js'
 export type { TranslateDocumentResult } from './tool.js'
 export * from './types.js'

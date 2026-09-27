@@ -129,6 +129,41 @@ export interface LogsResponse {
   readonly logs: string[]
 }
 
+/** One review finding's severity. */
+export type ReviewSeverity = 'high' | 'medium' | 'low'
+
+/** One review finding's category. */
+export type ReviewCategory =
+  | 'omission'
+  | 'mistranslation'
+  | 'terminology'
+  | 'format'
+  | 'untranslated'
+  | 'other'
+
+/** One issue the automatic review reports; a human decides how to fix it. */
+export interface ReviewIssue {
+  readonly severity: ReviewSeverity
+  readonly category: ReviewCategory
+  /** Source text near the issue, for locating it in the comparison view. */
+  readonly sourceExcerpt: string
+  /** Translated text near the issue. */
+  readonly translationExcerpt: string
+  /** What is wrong. */
+  readonly problem: string
+  /** Suggested correction, addressed to the human reviewer. */
+  readonly suggestion: string
+}
+
+/** The review subagent's structured verdict. */
+export interface ReviewResult {
+  /** `pass` when the translation needs no human decision, `issues` otherwise. */
+  readonly verdict: 'pass' | 'issues'
+  /** One-sentence overall assessment. */
+  readonly summary: string
+  readonly issues: readonly ReviewIssue[]
+}
+
 /** `/service/content/{id}/{type}` response: the whole file, base64-encoded. */
 export interface ContentResponse {
   readonly file_type: FileType

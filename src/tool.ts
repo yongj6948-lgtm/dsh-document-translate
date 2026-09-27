@@ -1,8 +1,11 @@
 /**
- * The model-facing `translate_document` tool: submit one file to the configured
- * DocuTranslate service, wait for the translation, and write the result into
- * the workspace. The service keeps task state in memory, so every failure path
- * releases the task and reports a retryable message.
+ * The model-facing `translate_document` tool. It runs the whole workflow:
+ * submit the file to DocuTranslate, wait for the draft, write it to the
+ * workspace, extract both sides as Markdown, render a two-column comparison,
+ * and run the automatic review through a subagent. Findings are reported for a
+ * human to act on; the tool never edits the translation.
+ *
+ * The service keeps task state in memory, so every path releases the task.
  * @module dsh-document-translate/tool
  */
 
@@ -15,8 +18,11 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { DocuTranslateClient, DocuTranslateError } from './client.js'
 import type { TaskId } from './client.js'
+import { alignBlocks, renderCompareHtml, splitBlocks } from './compare.js'
+import { extractMarkdown } from './extract.js'
 import type { ResolvedOptions } from './options.js'
-import type { FileType, TaskStatus, TranslatePayload, WorkflowType } from './types.js'
+import { runReview } from './review.js'
+import type { FileType, ReviewResult, TaskStatus, TranslatePayload, WorkflowType } from './types.js'
 import { FILE_TYPES, WORKFLOW_TYPES } from './types.js'
 
 /** Preferred result file kind per source extension. */
@@ -41,18 +47,24 @@ export interface TranslateDocumentResult {
   readonly taskId: string
   readonly sourcePath: string
   readonly outputPath: string
+  /** Path to the two-column comparison page. */
+  readonly compareHtmlPath: string
   readonly fileType: FileType
   readonly targetLanguage: string
+  /** `pass`, `issues`, or `skipped` when review was disabled. */
+  readonly verdict: 'pass' | 'issues' | 'skipped'
+  readonly issueCount: number
   readonly elapsedMs: number
 }
 
 /** Model-facing description. */
 const DESCRIPTION =
-  'Translate one document file with the DocuTranslate service and save the translated copy. '
-  + 'The file is uploaded to the service, translated by its workflow (markdown, docx, srt, xlsx, '
-  + 'epub, html, ass, pptx, json, txt, or auto-detect), and the result is written next to the '
-  + 'source (or to outputPath). Use insertMode "append" or "prepend" for a bilingual copy instead '
-  + 'of a replacement.'
+  'Translate one document file with the DocuTranslate service, then review the result and show a '
+  + 'side-by-side comparison. The file is uploaded, translated by its workflow (markdown, docx, srt, '
+  + 'xlsx, epub, html, ass, pptx, json, txt, pdf, or auto-detect), and the translated copy is written '
+  + 'next to the source (or to outputPath). The source and translation are extracted to Markdown, a '
+  + 'two-column HTML comparison is written, and a review subagent reports any translation problems so '
+  + 'the human can decide how to fix them. Use insertMode "append" or "prepend" for a bilingual copy.'
 
 /** One validated call's arguments, as inferred by `defineTool`. */
 interface TranslateArgs {
@@ -91,15 +103,20 @@ export function createTranslateTool(ctx: Context, getOptions: () => ResolvedOpti
           taskId: { type: 'string', required: true },
           sourcePath: { type: 'string', required: true },
           outputPath: { type: 'string', required: true },
+          compareHtmlPath: { type: 'string', required: true },
           fileType: { type: 'string', required: true },
           targetLanguage: { type: 'string', required: true },
+          verdict: { type: 'string', required: true },
+          issueCount: { type: 'integer', required: true },
           elapsedMs: { type: 'integer', required: true },
         },
       },
       render: (_args, value) => [{
         type: 'text',
         text: `Translated ${value.sourcePath} → ${value.outputPath}\n`
+          + `comparison: ${value.compareHtmlPath}\n`
           + `task ${value.taskId}, ${value.fileType}, ${value.targetLanguage}, `
+          + `review=${value.verdict} (${value.issueCount} issues), `
           + `${Math.round(value.elapsedMs / 1000)}s`,
       }],
     },
@@ -116,7 +133,7 @@ export function createTranslateTool(ctx: Context, getOptions: () => ResolvedOpti
   })
 }
 
-/** Run one translation: submit, wait, download, write. */
+/** Run one translation workflow: draft, compare, review. */
 async function runTranslate(
   ctx: Context,
   options: ResolvedOptions,
@@ -147,10 +164,7 @@ async function runTranslate(
   try {
     const status = await waitForTask(client, options, taskId, exec.signal)
     if (status.error_flag) {
-      throw new DocuTranslateError(
-        `translation failed: ${status.status_message}`,
-        'DT_TASK_FAILED',
-      )
+      throw new DocuTranslateError(`translation failed: ${status.status_message}`, 'DT_TASK_FAILED')
     }
     const preferred = args.workflowType !== undefined && workflowType !== 'auto'
       ? workflowFor(workflowType)
@@ -159,18 +173,78 @@ async function runTranslate(
     const file = await client.download(taskId, fileType, exec.signal)
     const outputPath = resolveOutputPath(sourcePath, options, fileType, args.outputPath)
     await writeFile(outputPath, file.bytes)
+
+    const { compareHtmlPath, review } = await buildComparison(
+      ctx, options, client, exec, taskId, status, sourcePath, outputPath, targetLanguage,
+    )
     return {
       taskId,
       sourcePath,
       outputPath,
+      compareHtmlPath,
       fileType,
       targetLanguage,
+      verdict: review === undefined ? 'skipped' : review.verdict,
+      issueCount: review?.issues.length ?? 0,
       elapsedMs: Date.now() - started,
     }
   } finally {
     // The service keeps task state and temp files in memory; release is best effort.
     await client.release(taskId).catch(() => undefined)
   }
+}
+
+/** Extract both sides, write the comparison page, and run the automatic review. */
+async function buildComparison(
+  ctx: Context,
+  options: ResolvedOptions,
+  client: DocuTranslateClient,
+  exec: ToolRunContext,
+  taskId: TaskId,
+  status: TaskStatus,
+  sourcePath: string,
+  outputPath: string,
+  targetLanguage: string,
+): Promise<{ compareHtmlPath: string; review?: ReviewResult }> {
+  const warnings: string[] = []
+  // The translated Markdown from the service comes off the same parse pipeline
+  // as the source, so block alignment is better than two independent extractions.
+  const translated = status.downloads['markdown'] !== undefined
+    ? { markdown: new TextDecoder().decode(await client.content(taskId, 'markdown', exec.signal)) }
+    : { markdown: (await extractMarkdown(outputPath)).markdown }
+
+  const source = await extractMarkdown(sourcePath)
+  if (source.pdf !== undefined && source.pdf.pagesNeedingOcr.length > 0) {
+    warnings.push(`源 PDF 有 ${source.pdf.pagesNeedingOcr.length} 页需要 OCR，文本复查可能不完整`)
+  }
+  const pairs = alignBlocks(splitBlocks(source.markdown), splitBlocks(translated.markdown))
+  const mismatches = pairs.filter(pair => pair.kindMismatch).length
+  if (mismatches > 0) {
+    warnings.push(`${mismatches} 行的原文/译文块类型不一致，可能是分段差异`)
+  }
+
+  const review = options.review
+    ? await runReview(ctx, options, exec, {
+      sourceName: basename(sourcePath),
+      translationName: basename(outputPath),
+      sourceText: source.markdown,
+      translationText: translated.markdown,
+      targetLanguage,
+      notes: warnings,
+    })
+    : undefined
+
+  const compareHtmlPath = comparePathFor(outputPath)
+  await writeFile(compareHtmlPath, renderCompareHtml({
+    title: basename(sourcePath),
+    sourceName: basename(sourcePath),
+    translationName: basename(outputPath),
+    pairs,
+    warnings,
+    ...review !== undefined ? { review } : {},
+    ...source.pdf !== undefined ? { pdf: source.pdf } : {},
+  }))
+  return { compareHtmlPath, ...review !== undefined ? { review } : {} }
 }
 
 /** Collect the A-side LLM parameters, omitting every unset field. */
@@ -236,6 +310,11 @@ function resolveOutputPath(
     : dirname(sourcePath)
   const stem = basename(sourcePath, extname(sourcePath))
   return join(directory, `${stem}.translated.${extensionFor(fileType)}`)
+}
+
+/** Comparison page path beside the translated file. */
+function comparePathFor(outputPath: string): string {
+  return `${outputPath.slice(0, outputPath.length - extname(outputPath).length)}.compare.html`
 }
 
 /** Result kind the service produces for a workflow, when it is unambiguous. */
