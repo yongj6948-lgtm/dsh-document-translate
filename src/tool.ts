@@ -1,9 +1,11 @@
 /**
- * The model-facing `translate_document` tool. It runs the whole workflow:
- * submit the file to DocuTranslate, wait for the draft, write it to the
- * workspace, extract both sides as Markdown, render a two-column comparison,
- * and run the automatic review through a subagent. Findings are reported for a
- * human to act on; the tool never edits the translation.
+ * The model-facing `translate_document` tool. It runs the deterministic part of
+ * the workflow: submit the file to DocuTranslate, write the translated copy,
+ * extract both sides as Markdown, and render a two-column comparison. It then
+ * returns a ready-made review brief; the calling agent delegates that brief to
+ * its own `subagent` tool, which owns the review model and reports findings
+ * back into the conversation. The plugin never reviews and never edits the
+ * translation.
  *
  * The service keeps task state in memory, so every path releases the task.
  * @module dsh-document-translate/tool
@@ -21,8 +23,8 @@ import type { TaskId } from './client.js'
 import { alignBlocks, renderCompareHtml, splitBlocks } from './compare.js'
 import { extractMarkdown } from './extract.js'
 import type { ResolvedOptions } from './options.js'
-import { runReview } from './review.js'
-import type { FileType, ReviewResult, TaskStatus, TranslatePayload, WorkflowType } from './types.js'
+import { buildReviewBrief } from './review.js'
+import type { FileType, TaskStatus, TranslatePayload, WorkflowType } from './types.js'
 import { FILE_TYPES, WORKFLOW_TYPES } from './types.js'
 
 /** Preferred result file kind per source extension. */
@@ -46,25 +48,31 @@ const SOURCE_FILE_TYPE: Record<string, FileType> = {
 export interface TranslateDocumentResult {
   readonly taskId: string
   readonly sourcePath: string
+  /** The translated copy, in the service's own format for the workflow. */
   readonly outputPath: string
-  /** Path to the two-column comparison page. */
+  /** Two-column source/translation HTML page. */
   readonly compareHtmlPath: string
+  /** Source document as Markdown, written for the reviewer to read. */
+  readonly reviewSourcePath: string
+  /** Translated document as Markdown, written for the reviewer to read. */
+  readonly reviewTranslationPath: string
   readonly fileType: FileType
   readonly targetLanguage: string
-  /** `pass`, `issues`, or `skipped` when review was disabled. */
-  readonly verdict: 'pass' | 'issues' | 'skipped'
-  readonly issueCount: number
+  /** Prompt for the calling agent's `subagent` tool. */
+  readonly reviewBrief: string
   readonly elapsedMs: number
 }
 
 /** Model-facing description. */
 const DESCRIPTION =
-  'Translate one document file with the DocuTranslate service, then review the result and show a '
-  + 'side-by-side comparison. The file is uploaded, translated by its workflow (markdown, docx, srt, '
-  + 'xlsx, epub, html, ass, pptx, json, txt, pdf, or auto-detect), and the translated copy is written '
-  + 'next to the source (or to outputPath). The source and translation are extracted to Markdown, a '
-  + 'two-column HTML comparison is written, and a review subagent reports any translation problems so '
-  + 'the human can decide how to fix them. Use insertMode "append" or "prepend" for a bilingual copy.'
+  'Translate one document with the DocuTranslate service and prepare its review. The file is '
+  + 'uploaded, translated by its workflow (markdown, docx, srt, xlsx, epub, html, ass, pptx, json, '
+  + 'txt, pdf, or auto-detect), and the translated copy is written next to the source (or to '
+  + 'outputPath). The source and translation are extracted to Markdown, a two-column HTML '
+  + 'comparison is written, and a `reviewBrief` is returned. '
+  + 'REQUIRED NEXT STEP: immediately delegate the review by calling the `subagent` tool with the '
+  + `returned reviewBrief as its prompt, then report the review findings to the user. Use insertMode `
+  + '"append" or "prepend" for a bilingual copy.'
 
 /** One validated call's arguments, as inferred by `defineTool`. */
 interface TranslateArgs {
@@ -104,10 +112,11 @@ export function createTranslateTool(ctx: Context, getOptions: () => ResolvedOpti
           sourcePath: { type: 'string', required: true },
           outputPath: { type: 'string', required: true },
           compareHtmlPath: { type: 'string', required: true },
+          reviewSourcePath: { type: 'string', required: true },
+          reviewTranslationPath: { type: 'string', required: true },
           fileType: { type: 'string', required: true },
           targetLanguage: { type: 'string', required: true },
-          verdict: { type: 'string', required: true },
-          issueCount: { type: 'integer', required: true },
+          reviewBrief: { type: 'string', required: true },
           elapsedMs: { type: 'integer', required: true },
         },
       },
@@ -116,8 +125,8 @@ export function createTranslateTool(ctx: Context, getOptions: () => ResolvedOpti
         text: `Translated ${value.sourcePath} → ${value.outputPath}\n`
           + `comparison: ${value.compareHtmlPath}\n`
           + `task ${value.taskId}, ${value.fileType}, ${value.targetLanguage}, `
-          + `review=${value.verdict} (${value.issueCount} issues), `
-          + `${Math.round(value.elapsedMs / 1000)}s`,
+          + `${Math.round(value.elapsedMs / 1000)}s\n\n`
+          + `下一步必须调用 subagent 工具复查，prompt 用：\n${value.reviewBrief}`,
       }],
     },
     async execute(args: TranslateArgs, exec: ToolRunContext): Promise<TranslateDocumentResult> {
@@ -133,7 +142,7 @@ export function createTranslateTool(ctx: Context, getOptions: () => ResolvedOpti
   })
 }
 
-/** Run one translation workflow: draft, compare, review. */
+/** Run one translation workflow: draft, extract, compare, brief. */
 async function runTranslate(
   ctx: Context,
   options: ResolvedOptions,
@@ -174,18 +183,19 @@ async function runTranslate(
     const outputPath = resolveOutputPath(sourcePath, options, fileType, args.outputPath)
     await writeFile(outputPath, file.bytes)
 
-    const { compareHtmlPath, review } = await buildComparison(
-      ctx, options, client, exec, taskId, status, sourcePath, outputPath, targetLanguage,
+    const prepared = await prepareReview(
+      client, exec, taskId, status, sourcePath, outputPath, targetLanguage,
     )
     return {
       taskId,
       sourcePath,
       outputPath,
-      compareHtmlPath,
+      compareHtmlPath: prepared.compareHtmlPath,
+      reviewSourcePath: prepared.reviewSourcePath,
+      reviewTranslationPath: prepared.reviewTranslationPath,
       fileType,
       targetLanguage,
-      verdict: review === undefined ? 'skipped' : review.verdict,
-      issueCount: review?.issues.length ?? 0,
+      reviewBrief: prepared.reviewBrief,
       elapsedMs: Date.now() - started,
     }
   } finally {
@@ -194,10 +204,8 @@ async function runTranslate(
   }
 }
 
-/** Extract both sides, write the comparison page, and run the automatic review. */
-async function buildComparison(
-  ctx: Context,
-  options: ResolvedOptions,
+/** Extract both sides, write the comparison and review Markdown, and compose the brief. */
+async function prepareReview(
   client: DocuTranslateClient,
   exec: ToolRunContext,
   taskId: TaskId,
@@ -205,7 +213,12 @@ async function buildComparison(
   sourcePath: string,
   outputPath: string,
   targetLanguage: string,
-): Promise<{ compareHtmlPath: string; review?: ReviewResult }> {
+): Promise<{
+  compareHtmlPath: string
+  reviewSourcePath: string
+  reviewTranslationPath: string
+  reviewBrief: string
+}> {
   const warnings: string[] = []
   // The translated Markdown from the service comes off the same parse pipeline
   // as the source, so block alignment is better than two independent extractions.
@@ -223,16 +236,13 @@ async function buildComparison(
     warnings.push(`${mismatches} 行的原文/译文块类型不一致，可能是分段差异`)
   }
 
-  const review = options.review
-    ? await runReview(ctx, options, exec, {
-      sourceName: basename(sourcePath),
-      translationName: basename(outputPath),
-      sourceText: source.markdown,
-      translationText: translated.markdown,
-      targetLanguage,
-      notes: warnings,
-    })
-    : undefined
+  const stem = join(dirname(outputPath), basename(sourcePath, extname(sourcePath)))
+  const reviewSourcePath = `${stem}.source.md`
+  const reviewTranslationPath = extname(outputPath).toLowerCase() === '.md'
+    ? outputPath
+    : `${stem}.translated.md`
+  await writeFile(reviewSourcePath, source.markdown)
+  if (reviewTranslationPath !== outputPath) await writeFile(reviewTranslationPath, translated.markdown)
 
   const compareHtmlPath = comparePathFor(outputPath)
   await writeFile(compareHtmlPath, renderCompareHtml({
@@ -241,10 +251,21 @@ async function buildComparison(
     translationName: basename(outputPath),
     pairs,
     warnings,
-    ...review !== undefined ? { review } : {},
     ...source.pdf !== undefined ? { pdf: source.pdf } : {},
   }))
-  return { compareHtmlPath, ...review !== undefined ? { review } : {} }
+
+  return {
+    compareHtmlPath,
+    reviewSourcePath,
+    reviewTranslationPath,
+    reviewBrief: buildReviewBrief({
+      sourcePath: reviewSourcePath,
+      translationPath: reviewTranslationPath,
+      sourceName: basename(sourcePath),
+      targetLanguage,
+      notes: warnings,
+    }),
+  }
 }
 
 /** Collect the A-side LLM parameters, omitting every unset field. */

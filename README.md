@@ -1,23 +1,30 @@
 # dsh-document-translate
 
-DeepSeek Harness plugin that adds an explicit **`translate_document`** tool. It runs the whole
-document-translation workflow: submit the file to a [DocuTranslate](https://github.com/) service,
-write the translated copy, build a two-column source/translation comparison, and run an **automatic
-review** through a subagent so translation problems reach a human instead of shipping silently.
+DeepSeek Harness plugin that adds an explicit **`translate_document`** tool. It runs the
+deterministic part of the document-translation workflow — submit to a [DocuTranslate](https://github.com/)
+service, write the translated copy, extract both sides as Markdown, and render a two-column
+comparison — then hands the agent a **review brief**. The agent delegates that brief to its own
+`subagent` tool, so the review model and provider are the profile's normal subagent configuration,
+not a plugin concern.
 
 See [`AGENTS.md`](AGENTS.md) for the recon record, decisions, and roadmap.
 
 ## What it does
 
 ```
-translate_document
-  1. DocuTranslate draft        POST /service/translate/file → poll → download
-  2. Extract reviewable text    @firecrawl/anydoc (+ @firecrawl/pdf-inspector for PDFs)
-  3. Two-column comparison      <name>.translated.compare.html
-  4. Automatic review           ctx.subagents → structured findings
-  5. Return                     { draft, comparison, verdict, issueCount }
-                                findings tell the human what to fix; the plugin never edits
+translate_document          (this plugin)
+  1. DocuTranslate draft     POST /service/translate/file → poll → download
+  2. Extract both sides      @firecrawl/anydoc (+ @firecrawl/pdf-inspector for PDFs)
+  3. Two-column comparison   <name>.translated.compare.html
+  4. Return                  draft, comparison, extracted Markdown, reviewBrief
+       ↓
+subagent                    (the calling agent, immediately)
+  5. Review the two Markdown files against the checklist in the brief
+  6. Findings reach the conversation; a human decides what to change
 ```
+
+The plugin never reviews and never edits the translation. Findings live in the conversation, not in
+the comparison page.
 
 Formats: `auto`, `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub`, `html`, `ass`,
 `pptx` — everything DocuTranslate supports. Use `insertMode: append` / `prepend` for a bilingual
@@ -49,7 +56,7 @@ a `pnpm pack` tarball.
 
 Every field is a live (`volatile`) Config field, editable from the built-in Plugins page or a
 `cordis.yml` layer. There are no hardcoded endpoints. See
-[`examples/cordis.local.patch.yml`](examples/cordis.local.patch.yml) for a full deployment layer.
+[`examples/cordis.local.patch.yml`](examples/cordis.local.patch.yml) for a deployment layer.
 
 ```yaml
 - id: document-translate
@@ -60,9 +67,6 @@ Every field is a live (`volatile`) Config field, editable from the built-in Plug
     llmBaseURL: 'https://api.deepseek.com/v1'
     llmModelId: 'deepseek-chat'
     llmApiKeyEnv: 'DOCUTRANSLATE_LLM_API_KEY'
-    review: true
-    reviewProvider: vllm          # an llm-pi-ai route
-    reviewModel: 'your-model'
 ```
 
 | Field | Default | Meaning |
@@ -73,9 +77,6 @@ Every field is a live (`volatile`) Config field, editable from the built-in Plug
 | `requestTimeoutMs` / `taskTimeoutMs` / `pollIntervalMs` | `120000` / `1800000` / `2000` | Timeouts and poll interval |
 | `llmBaseURL` / `llmModelId` / `llmProvider` | unset | Translation LLM forwarded to DocuTranslate (mode A) |
 | `llmApiKeyEnv` | `DOCUTRANSLATE_LLM_API_KEY` | Credential reference resolved through `ctx.credentials` |
-| `review` | `true` | Run the automatic review |
-| `subagentProvider` | `spawn` | Subagent provider running the review child |
-| `reviewProvider` / `reviewModel` | unset | LLM route/model for the review child (unset inherits the caller) |
 | `convertEngine` | — | `identity` / `mineru` / `docling` / `mineru_deploy` |
 | `outputDir` | unset | Empty writes `<stem>.translated.<ext>` beside the source |
 
@@ -87,13 +88,23 @@ Every field is a live (`volatile`) Config field, editable from the built-in Plug
   (`DOCUTRANSLATE_BASE_URL` / `API_KEY` / `MODEL_ID`). Keep `DOCUTRANSLATE_ENV_FORCE_OVERRIDE=false`
   so the plugin's values win when present.
 
-### Review LLM
+### Review
 
-The review child runs through the harness LLM service, so its route must be a registered provider.
-`@deepseek-ai/dsh-llm-pi-ai` is mounted dormant by the base bundle; declare an OpenAI-compatible
-route for your endpoint (the example layer shows a local vLLM route) and point `reviewProvider` at
-it. Without the subagent service or a matching route, review fails loudly rather than silently
-skipping.
+Nothing to configure here. The plugin returns a `reviewBrief`; the agent calls its normal `subagent`
+tool with it, so whichever provider/model the profile's subagent uses does the review. The brief
+tells the reviewer which two Markdown files to read and what to check (omissions, mistranslations,
+terminology, format/placeholders, untranslated leftovers).
+
+## Artifacts
+
+For a source `dir/sample.md` translated to `dir/sample.translated.md`:
+
+| File | Purpose |
+|---|---|
+| `sample.translated.md` | The translated copy (extension follows the workflow) |
+| `sample.compare…` → `sample.translated.compare.html` | Two-column source/translation view |
+| `sample.source.md` | Source extracted to Markdown, read by the reviewer |
+| `sample.translated.md` | Translation extracted to Markdown, read by the reviewer |
 
 ## Development
 
@@ -109,13 +120,14 @@ node scripts/live-smoke.mjs      # needs a reachable DocuTranslate service
 
 - **Foreground only** — the tool polls in the calling execution; background jobs (`ctx.jobs`) and
   progress injection are planned for M2.
+- **Review is a model step** — the tool description requires the agent to delegate immediately, but
+  nothing enforces it; an agent that ignores the instruction returns a translation with no review.
 - **Positional block alignment** — the comparison pairs blocks by index. Both sides come from the
   same DocuTranslate parse pipeline, so sequences normally match; a kind mismatch is surfaced in the
-  view rather than hidden, but a document whose translation merges or splits blocks can misalign.
+  view rather than hidden, but a translation that merges or splits blocks can misalign.
 - **Native extractors** — `@firecrawl/anydoc` and `@firecrawl/pdf-inspector` ship platform-specific
   binaries (darwin arm64/x64, linux gnu/musl arm64/x64, win32 x64). A platform without one cannot
-  convert container formats; PDFs also lose their scanned/text classification. Text formats still
-  work.
+  convert container formats or classify PDFs; text formats still work.
 - **Scanned PDFs** — pages that need OCR are reported as such; their text cannot be reviewed.
 - **In-memory task state** — DocuTranslate keeps tasks in memory; a service restart invalidates
   `task_id` values recorded in sessions.

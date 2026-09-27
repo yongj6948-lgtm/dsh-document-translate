@@ -37,31 +37,18 @@ test('alignBlocks flags a kind mismatch without dropping rows', () => {
   assert.equal(pairs[1].kindMismatch, false)
 })
 
-test('renderCompareHtml escapes raw HTML and marks findings', () => {
+test('renderCompareHtml renders both sides and warnings', () => {
   const html = renderCompareHtml({
     title: 'doc.md',
     sourceName: 'doc.md',
     translationName: 'doc.translated.md',
     pairs: alignBlocks(splitBlocks('Hello'), splitBlocks('你好')),
     warnings: ['one warning'],
-    review: {
-      verdict: 'issues',
-      summary: '有一处误译',
-      issues: [{
-        severity: 'high',
-        category: 'mistranslation',
-        sourceExcerpt: 'Hello',
-        translationExcerpt: '你好',
-        problem: '语气不对',
-        suggestion: '改成「您好」',
-      }],
-    },
   })
   assert.match(html, /<!DOCTYPE html>/)
   assert.match(html, /你好/)
-  assert.match(html, /#1/)
-  assert.match(html, /有一处误译/)
   assert.match(html, /one warning/)
+  assert.match(html, /翻译对照/)
 })
 
 test('renderCompareHtml neutralizes script in document text', () => {
