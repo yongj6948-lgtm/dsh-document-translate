@@ -19,11 +19,33 @@ Workflows: `auto`, `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub
 
 ## Install
 
+From a checkout on the same machine:
+
 ```sh
 dsh plugin --profile <name> add ./dsh-document-translate
 dsh --profile <name> --dump-config | grep -A3 document-translate
 dsh --profile <name>
 ```
+
+From GitHub (a git install fetches **sources** and builds them via the package's `prepare`
+script, which pnpm blocks until allowed):
+
+```sh
+dsh plugin --profile <name> add github:<you>/dsh-document-translate#<sha>
+```
+
+The first run fails with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`. Copy the exact key pnpm prints into
+the profile's `pnpm-workspace.yaml`, then re-run:
+
+```yaml
+allowBuilds:
+  "dsh-document-translate@github:<you>/dsh-document-translate#<sha>": true
+```
+
+Allowlisting means **executing the package's code at install time** — pin a commit SHA and only
+allow sources you trust. To avoid the allowance entirely, distribute built artifacts instead:
+publish to npm (`lib/` built at publish) or ship a `pnpm pack` tarball; users then run
+`dsh plugin --profile <name> add <package-or-tarball>` with no build step.
 
 ## Configure
 
@@ -74,11 +96,16 @@ option.
 
 ```sh
 export PATH="$PATH:<node bin>"
-npm install --legacy-peer-deps   # @deepseek-ai/* packages carry workspace peers
+npm install                      # auto-installs the declared @deepseek-ai peers
 npm run build                    # tsc -> lib/
 npm test                         # build, then node --test tests/*.test.ts
 node scripts/live-smoke.mjs      # needs a reachable DocuTranslate service
 ```
+
+> `dsh plugin add <local-path>` links a checkout, and Node resolves the plugin's own
+> `node_modules` before the host's. Use plain `npm install` (which installs the declared peers, so
+the local copies are self-sufficient). A git install does not carry them at all and uses the host's
+copies.
 
 `scripts/live-smoke.mjs` runs the no-LLM parse path by default. Set
 `DOCUTRANSLATE_TEST_LLM_BASE_URL` / `_API_KEY` / `_MODEL_ID` to also run a real translation.
