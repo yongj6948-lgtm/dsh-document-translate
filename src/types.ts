@@ -41,14 +41,17 @@ export const FILE_TYPES = [
 /** One supported result file kind. */
 export type FileType = (typeof FILE_TYPES)[number]
 
+/** Document conversion engines accepted for PDF/Markdown inputs. */
+export const CONVERT_ENGINES = ['identity', 'mineru', 'docling', 'mineru_deploy'] as const
+
+/** One supported document conversion engine. */
+export type ConvertEngine = (typeof CONVERT_ENGINES)[number]
+
 /** How a translation is written relative to the source text. */
 export type InsertMode = 'replace' | 'append' | 'prepend'
 
 /** Text segmentation strategy (TXT workflow only). */
 export type SegmentMode = 'line' | 'paragraph' | 'none'
-
-/** Thinking policy forwarded to the translation LLM. */
-export type ThinkingMode = 'default' | 'enable' | 'disable'
 
 /**
  * LLM connection parameters forwarded to DocuTranslate. Every field is
@@ -60,7 +63,6 @@ export interface LlmParams {
   readonly api_key?: string
   readonly model_id?: string
   readonly provider?: string
-  readonly thinking?: ThinkingMode
   readonly temperature?: number
   readonly top_p?: number
   readonly chunk_size?: number

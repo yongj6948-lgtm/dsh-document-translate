@@ -1,11 +1,12 @@
 # dsh-document-translate
 
 DeepSeek Harness plugin that adds an explicit **`translate_document`** tool backed by a
-[DocuTranslate](https://github.com/) service on the LAN. The tool uploads one file, waits for the
-service's translation workflow to finish, and writes the translated copy beside the source.
+[DocuTranslate](https://github.com/) service. The tool uploads one file, waits for the service's
+translation workflow to finish, and writes the translated copy beside the source.
 
-Current state: **M1 complete** — plugin skeleton, HTTP client, tool registration, and a live smoke
-script. See [`AGENTS.md`](AGENTS.md) for the full recon record, design decisions, and roadmap.
+Current state: **M1 complete** — plugin skeleton, HTTP client, tool registration, a live smoke
+script, and a verified real translation. See [`AGENTS.md`](AGENTS.md) for the recon record,
+decisions, and roadmap.
 
 ## What it provides
 
@@ -16,9 +17,20 @@ script. See [`AGENTS.md`](AGENTS.md) for the full recon record, design decisions
 Workflows: `auto`, `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub`, `html`, `ass`,
 `pptx`. Use `insertMode: append` / `prepend` for a bilingual copy instead of a replacement.
 
+## Install
+
+```sh
+dsh plugin --profile <name> add ./dsh-document-translate
+dsh --profile <name> --dump-config | grep -A3 document-translate
+dsh --profile <name>
+```
+
 ## Configure
 
-`cordis.yml` (or a profile patch layer):
+Nothing is hardcoded: every field below is a live (`volatile`) Config field, editable from the
+built-in Plugins/settings page or from a `cordis.yml` layer. The bundle only inserts the plugin row;
+point it at your service and translation LLM from your profile's `cordis.patch.yml` (see
+[`examples/cordis.local.patch.yml`](examples/cordis.local.patch.yml)):
 
 ```yaml
 - id: document-translate
@@ -26,13 +38,9 @@ Workflows: `auto`, `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub
   config:
     baseURL: 'http://127.0.0.1:8010'
     targetLang: '简体中文'
-    insertMode: replace        # replace | append | prepend
-    # A-side LLM parameters; leave unset to use the service's own defaults (B-side).
-    # Defaults follow the local pi-agent `vllm` provider.
-    llmBaseURL: 'http://127.0.0.1:8888/v1'
-    llmModelId: 'your-model'
-    llmThinking: enable
-    llmApiKeyEnv: DOCUTRANSLATE_LLM_API_KEY
+    llmBaseURL: 'https://api.deepseek.com/v1'
+    llmModelId: 'deepseek-chat'
+    llmApiKeyEnv: 'DOCUTRANSLATE_LLM_API_KEY'
 ```
 
 | Field | Default | Env fallback | Meaning |
@@ -45,27 +53,27 @@ Workflows: `auto`, `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub
 | `requestTimeoutMs` | `120000` | — | Per-request HTTP timeout |
 | `taskTimeoutMs` | `1800000` | — | Overall task timeout |
 | `pollIntervalMs` | `2000` | — | Status poll interval |
-| `llmBaseURL` / `llmModelId` / `llmProvider` / `llmThinking` | unset | — | Forwarded to DocuTranslate when set |
+| `llmBaseURL` / `llmModelId` / `llmProvider` | unset | — | Forwarded to DocuTranslate when set |
 | `llmApiKeyEnv` | `DOCUTRANSLATE_LLM_API_KEY` | same name | Credential reference resolved through `ctx.credentials` |
 | `convertEngine` | — | — | `identity` / `mineru` / `docling` / `mineru_deploy` |
 | `outputDir` | unset | — | Empty writes `<stem>.translated.<ext>` beside the source |
 
-### LLM configuration (A+B)
+### Translation LLM (A+B)
 
 - **A** — the plugin resolves `llmApiKeyEnv` through the Harness credential seam and forwards
-  `base_url` / `model_id` / `api_key` per request. Store the local vLLM key once
-  (`DOCUTRANSLATE_LLM_API_KEY=local`) or leave it to the launch environment.
+  `base_url` / `model_id` / `api_key` per request. Store the key once with `dsh` (or leave it to the
+  launch environment); no secret enters this repository.
 - **B** — when those fields are unset, DocuTranslate falls back to its own `.env`
   (`DOCUTRANSLATE_BASE_URL` / `API_KEY` / `MODEL_ID`). Keep `DOCUTRANSLATE_ENV_FORCE_OVERRIDE=false`
   so the plugin's values win when present.
 
-> DocuTranslate accepts only `thinking: default | enable | disable`. The pi-agent `low` level maps to
-> `enable`, which selects the DeepSeek-V4 `chat_template_kwargs` branch.
+The thinking mode is intentionally left at DocuTranslate's default (disabled); it is not a plugin
+option.
 
 ## Development
 
 ```sh
-export PATH="$PATH:/home/user/.nvm/versions/node/v24.21.0/bin"
+export PATH="$PATH:<node bin>"
 npm install --legacy-peer-deps   # @deepseek-ai/* packages carry workspace peers
 npm run build                    # tsc -> lib/
 npm test                         # build, then node --test tests/*.test.ts
@@ -83,5 +91,5 @@ node scripts/live-smoke.mjs      # needs a reachable DocuTranslate service
   HTML view is M3.
 - **In-memory task state** — DocuTranslate keeps tasks in memory; a service restart invalidates
   `task_id` values recorded in sessions.
-- **Plaintext LAN transport** — the service is reached over HTTP on the trusted network; a
-  service-side API key of its own is not yet configured.
+- **Plaintext LAN transport** — deploy the service on a trusted network or behind TLS; the service's
+  own optional API key is not yet exposed by this plugin.

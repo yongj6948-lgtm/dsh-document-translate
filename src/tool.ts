@@ -63,18 +63,14 @@ interface TranslateArgs {
   readonly outputPath?: string
 }
 
-/** Build the tool definition bound to one resolved plugin instance. */
-export function createTranslateTool(ctx: Context, options: ResolvedOptions) {
-  const client = new DocuTranslateClient({
-    baseURL: options.baseURL,
-    timeoutMs: options.requestTimeoutMs,
-  })
+/** Build the tool definition bound to one plugin instance's live options. */
+export function createTranslateTool(ctx: Context, getOptions: () => ResolvedOptions) {
   return defineTool({
     name: 'translate_document',
     description: DESCRIPTION,
     parameters: {
       source: { type: 'string', required: true, description: 'Path to the document to translate.' },
-      targetLanguage: { type: 'string', description: `Target language (default: ${options.targetLang}).` },
+      targetLanguage: { type: 'string', description: 'Target language; defaults to the configured target language.' },
       workflowType: {
         type: 'string',
         enum: WORKFLOW_TYPES,
@@ -108,6 +104,13 @@ export function createTranslateTool(ctx: Context, options: ResolvedOptions) {
       }],
     },
     async execute(args: TranslateArgs, exec: ToolRunContext): Promise<TranslateDocumentResult> {
+      // Read the live settings at the start of the operation so a settings edit
+      // applies to the next call without a restart.
+      const options = getOptions()
+      const client = new DocuTranslateClient({
+        baseURL: options.baseURL,
+        timeoutMs: options.requestTimeoutMs,
+      })
       return await runTranslate(ctx, options, client, args, exec)
     },
   })
@@ -179,7 +182,6 @@ function llmParams(
     ...options.llmBaseURL !== undefined ? { base_url: options.llmBaseURL } : {},
     ...options.llmModelId !== undefined ? { model_id: options.llmModelId } : {},
     ...options.llmProvider !== undefined ? { provider: options.llmProvider } : {},
-    ...options.llmThinking !== undefined ? { thinking: options.llmThinking } : {},
     ...apiKey !== undefined ? { api_key: apiKey } : {},
   }
 }

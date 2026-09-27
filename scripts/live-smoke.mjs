@@ -13,9 +13,6 @@
  *   DOCUTRANSLATE_TEST_LLM_API_KEY=local \
  *   DOCUTRANSLATE_TEST_LLM_MODEL_ID=your-model \
  *   node scripts/live-smoke.mjs
- *
- * `DOCUTRANSLATE_TEST_LLM_THINKING` overrides the thinking policy (default
- * `enable`, which DocuTranslate maps to `chat_template_kwargs` for DeepSeek-V4).
  */
 import { DocuTranslateClient } from '../lib/client.js'
 
@@ -79,7 +76,6 @@ if (llmBaseURL && llmApiKey && llmModelId) {
     base_url: llmBaseURL,
     api_key: llmApiKey,
     model_id: llmModelId,
-    thinking: process.env.DOCUTRANSLATE_TEST_LLM_THINKING ?? 'enable',
     convert_engine: 'identity',
   })
   const status = await wait(translateId)

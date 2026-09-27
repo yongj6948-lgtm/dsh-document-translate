@@ -1,23 +1,12 @@
 # dsh-document-translate bundle patch.
 #
-# Registers the DocuTranslate-backed document translation tool. The row's
-# `config` carries this deployment's defaults; a profile or a later patch layer
-# may replace any value (a patch replaces the whole row config, so restate the
-# keys you keep).
+# Registers the DocuTranslate-backed document translation tool. No endpoint,
+# model, or credential is hardcoded here: every deployment-varying value is a
+# live Config field the built-in settings page (or a profile patch layer) edits.
 #
-# LLM config follows the local pi-agent provider `vllm`
-# (http://127.0.0.1:8888/v1, model your-model, thinking low):
-# DocuTranslate only accepts `default | enable | disable`, and `enable` selects
-# the DeepSeek-V4 `chat_template_kwargs` branch, so "low" maps to `enable`.
-# The API key is not stored here; the plugin resolves `DOCUTRANSLATE_LLM_API_KEY`
-# through the Harness credential seam (falling back to the launch environment).
+# To point this deployment at a service and translation LLM, override the row
+# from your profile's cordis.patch.yml or a --patch overlay; see
+# examples/cordis.local.patch.yml.
 - insert:
     - id: document-translate
       name: 'dsh-document-translate'
-      config:
-        baseURL: 'http://127.0.0.1:8010'
-        targetLang: '简体中文'
-        llmBaseURL: 'http://127.0.0.1:8888/v1'
-        llmModelId: 'your-model'
-        llmThinking: enable
-        llmApiKeyEnv: 'DOCUTRANSLATE_LLM_API_KEY'

@@ -27,6 +27,6 @@ export * from './types.js'
 
 /** Register the document translation tool. */
 export function apply(ctx: Context, config: TranslateConfig): void {
-  const options = resolveOptions(ctx, config)
-  ctx.tools.register(createTranslateTool(ctx, options))
+  // Resolve per call: the Config fields are live references the settings page can edit.
+  ctx.tools.register(createTranslateTool(ctx, () => resolveOptions(ctx, config)))
 }
