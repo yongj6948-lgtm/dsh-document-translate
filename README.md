@@ -30,6 +30,11 @@ Formats: `auto`, `markdown_based`, `txt`, `json`, `xlsx`, `docx`, `srt`, `epub`,
 `pptx` — everything DocuTranslate supports. Use `insertMode: append` / `prepend` for a bilingual
 copy instead of a replacement.
 
+**PDFs** are read locally by `@firecrawl/pdf-inspector` and submitted as Markdown, so DocuTranslate's
+conversion engines (mineru/docling) are never involved and the original PDF is left untouched. The
+result is a translated **Markdown** document plus the comparison view, not a re-typeset PDF.
+Scanned/image-only PDFs are refused for now.
+
 ## Install
 
 ```sh
@@ -128,7 +133,11 @@ node scripts/live-smoke.mjs      # needs a reachable DocuTranslate service
 - **Native extractors** — `@firecrawl/anydoc` and `@firecrawl/pdf-inspector` ship platform-specific
   binaries (darwin arm64/x64, linux gnu/musl arm64/x64, win32 x64). A platform without one cannot
   convert container formats or classify PDFs; text formats still work.
-- **Scanned PDFs** — pages that need OCR are reported as such; their text cannot be reviewed.
+- **Scanned PDFs are not supported** — a `Scanned` or `ImageBased` PDF is refused with a clear error;
+  OCR first and convert to docx/md if needed. A partially scanned (`Mixed`) PDF proceeds, but the
+  pages pdf-inspector flags for OCR are reported in the brief and the comparison page.
+- **PDF output is Markdown, not a PDF** — the original PDF is never rewritten; there is no
+  layout-preserving re-typeset. That would need PDF layout analysis and in-place overlay.
 - **In-memory task state** — DocuTranslate keeps tasks in memory; a service restart invalidates
   `task_id` values recorded in sessions.
 - **Plaintext LAN transport** — deploy the service on a trusted network or behind TLS.

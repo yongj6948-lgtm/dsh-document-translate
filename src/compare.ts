@@ -156,7 +156,7 @@ export function renderCompareHtml(input: ComparePageInput): string {
     ? ''
     : `<p class="meta">PDF 类型：<code>${escapeHtml(input.pdf.pdfType)}</code>`
       + (input.pdf.pagesNeedingOcr.length > 0
-        ? `，需要 OCR 的页（0 起）：${input.pdf.pagesNeedingOcr.map(page => page + 1).join(', ')}`
+        ? `，建议 OCR 的页：${input.pdf.pagesNeedingOcr.join(', ')}`
         : '')
       + `</p>`
 

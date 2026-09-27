@@ -21,7 +21,7 @@ export { Config }
 export { resolveOptions }
 export { DocuTranslateClient, DocuTranslateError } from './client.js'
 export type { ClientOptions, DocuTranslateErrorCode, DownloadedFile, TaskId } from './client.js'
-export { extractMarkdown } from './extract.js'
+export { extractMarkdown, extractPdfMarkdown, ScannedPdfError } from './extract.js'
 export type { ExtractMethod, ExtractedText, PdfFacts } from './extract.js'
 export { alignBlocks, renderCompareHtml, splitBlocks } from './compare.js'
 export type { CompareBlock, ComparePair, ComparePageInput } from './compare.js'

@@ -4,7 +4,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { extractMarkdown } from '../lib/extract.js'
+import { extractMarkdown, extractPdfMarkdown } from '../lib/extract.js'
 
 const fixtures = fileURLToPath(new URL('./fixtures/', import.meta.url))
 
@@ -22,4 +22,11 @@ test('extractMarkdown converts a docx through anydoc', async () => {
   assert.equal(result.method, 'anydoc')
   assert.match(result.markdown, /产品说明/)
   assert.match(result.markdown, /Markdown/)
+})
+
+test('extractPdfMarkdown reads a text-based PDF locally', async () => {
+  const result = await extractPdfMarkdown(join(fixtures, 'sample.pdf'))
+  assert.equal(result.method, 'pdf-inspector')
+  assert.equal(result.pdf.pdfType, 'TextBased')
+  assert.match(result.markdown, /Dummy PDF file/)
 })

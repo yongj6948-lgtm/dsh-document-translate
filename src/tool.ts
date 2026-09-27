@@ -21,7 +21,8 @@ import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { DocuTranslateClient, DocuTranslateError } from './client.js'
 import type { TaskId } from './client.js'
 import { alignBlocks, renderCompareHtml, splitBlocks } from './compare.js'
-import { extractMarkdown } from './extract.js'
+import { extractMarkdown, extractPdfMarkdown } from './extract.js'
+import type { PdfFacts } from './extract.js'
 import type { ResolvedOptions } from './options.js'
 import { buildReviewBrief } from './review.js'
 import type { FileType, TaskStatus, TranslatePayload, WorkflowType } from './types.js'
@@ -159,32 +160,49 @@ async function runTranslate(
     throw new Error(`cannot read source file ${sourcePath}: ${String(error)}`)
   }
   const targetLanguage = args.targetLanguage ?? options.targetLang
-  const workflowType = args.workflowType ?? options.workflowType
+  let workflowType = args.workflowType ?? options.workflowType
+  let convertEngine = options.convertEngine
   const insertMode = args.insertMode ?? options.insertMode
+  // A text-based PDF is read locally and submitted as Markdown. DocuTranslate's
+  // own PDF path would rebuild the document through mineru/docling, changing
+  // its layout, which this deployment does not want.
+  let submitName = basename(sourcePath)
+  let submitBytes = bytes
+  let knownSource: { markdown: string; pdf?: PdfFacts } | undefined
+  if (extname(sourcePath).toLowerCase() === '.pdf') {
+    const extracted = await extractPdfMarkdown(sourcePath)
+    knownSource = { markdown: extracted.markdown, pdf: extracted.pdf }
+    submitName = `${basename(sourcePath, extname(sourcePath))}.md`
+    submitBytes = new TextEncoder().encode(extracted.markdown)
+    workflowType = 'markdown_based'
+    convertEngine = 'identity'
+  }
   const payload: TranslatePayload = {
     workflow_type: workflowType,
     to_lang: targetLanguage,
     insert_mode: insertMode,
     ...insertMode === 'replace' ? {} : { separator: options.separator },
     ...llmParams(options, await resolveApiKey(ctx, options)),
-    ...options.convertEngine !== undefined ? { convert_engine: options.convertEngine } : {},
+    ...convertEngine !== undefined ? { convert_engine: convertEngine } : {},
   }
-  const taskId = await client.submit(basename(sourcePath), bytes, payload, exec.signal)
+  const taskId = await client.submit(submitName, submitBytes, payload, exec.signal)
   try {
     const status = await waitForTask(client, options, taskId, exec.signal)
     if (status.error_flag) {
       throw new DocuTranslateError(`translation failed: ${status.status_message}`, 'DT_TASK_FAILED')
     }
-    const preferred = args.workflowType !== undefined && workflowType !== 'auto'
-      ? workflowFor(workflowType)
-      : SOURCE_FILE_TYPE[extname(sourcePath).toLowerCase()] ?? inferFromStatus(status)
+    const preferred = knownSource !== undefined
+      ? 'markdown'
+      : (args.workflowType !== undefined && workflowType !== 'auto'
+          ? workflowFor(workflowType)
+          : SOURCE_FILE_TYPE[extname(sourcePath).toLowerCase()] ?? inferFromStatus(status))
     const fileType = pickAvailable(status, preferred)
     const file = await client.download(taskId, fileType, exec.signal)
     const outputPath = resolveOutputPath(sourcePath, options, fileType, args.outputPath)
     await writeFile(outputPath, file.bytes)
 
     const prepared = await prepareReview(
-      client, exec, taskId, status, sourcePath, outputPath, targetLanguage,
+      client, exec, taskId, status, sourcePath, outputPath, targetLanguage, knownSource,
     )
     return {
       taskId,
@@ -213,6 +231,7 @@ async function prepareReview(
   sourcePath: string,
   outputPath: string,
   targetLanguage: string,
+  knownSource: { markdown: string; pdf?: PdfFacts } | undefined,
 ): Promise<{
   compareHtmlPath: string
   reviewSourcePath: string
@@ -226,9 +245,13 @@ async function prepareReview(
     ? { markdown: new TextDecoder().decode(await client.content(taskId, 'markdown', exec.signal)) }
     : { markdown: (await extractMarkdown(outputPath)).markdown }
 
-  const source = await extractMarkdown(sourcePath)
+  const source = knownSource !== undefined
+    ? { markdown: knownSource.markdown, ...knownSource.pdf !== undefined ? { pdf: knownSource.pdf } : {} }
+    : await extractMarkdown(sourcePath)
   if (source.pdf !== undefined && source.pdf.pagesNeedingOcr.length > 0) {
-    warnings.push(`源 PDF 有 ${source.pdf.pagesNeedingOcr.length} 页需要 OCR，文本复查可能不完整`)
+    warnings.push(
+      `pdf-inspector 标记第 ${source.pdf.pagesNeedingOcr.join(', ')} 页建议 OCR，若译文缺失这些页的内容请人工确认`,
+    )
   }
   const pairs = alignBlocks(splitBlocks(source.markdown), splitBlocks(translated.markdown))
   const mismatches = pairs.filter(pair => pair.kindMismatch).length
