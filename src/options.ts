@@ -70,6 +70,8 @@ export interface Config {
   convertEngine: Volatile<ConvertEngine | undefined>
   /** Directory for translated output; empty writes beside the source file. */
   outputDir: Volatile<string | undefined>
+  /** Show a live progress row during translation (via an unowned `ctx.jobs` display job). */
+  showProgress: Volatile<boolean>
 }
 
 /** Schemastery schema validating {@link Config} in `cordis.yml` or the settings page. */
@@ -88,6 +90,7 @@ export const Config = z.object({
   llmApiKeyEnv: z.string().volatile(),
   convertEngine: z.union(CONVERT_ENGINES).volatile(),
   outputDir: z.string().volatile(),
+  showProgress: z.boolean().default(true).volatile(),
 })
 
 /** Fully resolved options (no optional tuning fields, no live references). */
@@ -107,6 +110,8 @@ export interface ResolvedOptions {
   readonly convertEngine?: ConvertEngine
   /** Resolved output directory; empty means "beside the source file". */
   readonly outputDir: string
+  /** Whether to show a live progress row during translation. */
+  readonly showProgress: boolean
 }
 
 /**
@@ -141,6 +146,7 @@ export function resolveOptions(ctx: Context, config: Config): ResolvedOptions {
     llmApiKeyEnv: config.llmApiKeyEnv.get() ?? DEFAULT_LLM_API_KEY_ENV,
     ...pick('convertEngine', config.convertEngine.get()),
     outputDir: config.outputDir.get() ?? '',
+    showProgress: config.showProgress.get(),
   }
 }
 

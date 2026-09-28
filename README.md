@@ -84,6 +84,16 @@ Every field is a live (`volatile`) Config field, editable from the built-in Plug
 | `llmApiKeyEnv` | `DOCUTRANSLATE_LLM_API_KEY` | Credential reference resolved through `ctx.credentials` |
 | `convertEngine` | — | `identity` / `mineru` / `docling` / `mineru_deploy` |
 | `outputDir` | unset | Empty writes `<stem>.translated.<ext>` beside the source |
+| `showProgress` | `true` | Show a live progress row while translating (see below) |
+
+### Progress
+
+A foreground tool has no progress channel in dsh, so while `translate_document` polls the service it
+registers a lightweight **unowned** `ctx.jobs` job purely as a display surface. The Web client's job
+list renders its live progress line (`45% 翻译中`) and expandable output panel. The job is unowned on
+purpose: `dsh-tool-jobs` sends no completion notice for an unowned job, so the tool still returns its
+normal synchronous result and the conversation gets no spurious "read your job output" message. When
+no job registry is present, the surface is simply absent. Set `showProgress: false` to disable it.
 
 ### Translation LLM (A+B)
 
@@ -125,6 +135,9 @@ node scripts/live-smoke.mjs      # needs a reachable DocuTranslate service
 
 - **Foreground only** — the tool polls in the calling execution; background jobs (`ctx.jobs`) and
   progress injection are planned for M2.
+- **Progress is display-only** — `showProgress` publishes a live row through `ctx.jobs` for a UI that
+  renders a job list (the Web client). It does not stream progress into the model's turn: the tool
+  still blocks until the translation finishes and then returns its full result.
 - **Review is a model step** — the tool description requires the agent to delegate immediately, but
   nothing enforces it; an agent that ignores the instruction returns a translation with no review.
 - **Positional block alignment** — the comparison pairs blocks by index. Both sides come from the

@@ -24,6 +24,7 @@ import { alignBlocks, renderCompareHtml, splitBlocks } from './compare.js'
 import { extractMarkdown, extractPdfMarkdown } from './extract.js'
 import type { PdfFacts } from './extract.js'
 import type { ResolvedOptions } from './options.js'
+import { startProgress } from './progress.js'
 import { buildReviewBrief } from './review.js'
 import type { FileType, TaskStatus, TranslatePayload, WorkflowType } from './types.js'
 import { FILE_TYPES, WORKFLOW_TYPES } from './types.js'
@@ -185,40 +186,63 @@ async function runTranslate(
     ...llmParams(options, await resolveApiKey(ctx, options)),
     ...convertEngine !== undefined ? { convert_engine: convertEngine } : {},
   }
-  const taskId = await client.submit(submitName, submitBytes, payload, exec.signal)
+  // A live progress row, when the harness has a job registry. The row is
+  // unowned on purpose so it produces no completion notice; the tool still
+  // waits for the workflow and returns its normal result.
+  const progress = options.showProgress
+    ? startProgress(ctx, `${basename(sourcePath)} → ${targetLanguage}`)
+    : undefined
+  progress?.log(`提交给 DocuTranslate：${submitName}`)
   try {
-    const status = await waitForTask(client, options, taskId, exec.signal)
-    if (status.error_flag) {
-      throw new DocuTranslateError(`translation failed: ${status.status_message}`, 'DT_TASK_FAILED')
-    }
-    const preferred = knownSource !== undefined
-      ? 'markdown'
-      : (args.workflowType !== undefined && workflowType !== 'auto'
-          ? workflowFor(workflowType)
-          : SOURCE_FILE_TYPE[extname(sourcePath).toLowerCase()] ?? inferFromStatus(status))
-    const fileType = pickAvailable(status, preferred)
-    const file = await client.download(taskId, fileType, exec.signal)
-    const outputPath = resolveOutputPath(sourcePath, options, fileType, args.outputPath)
-    await writeFile(outputPath, file.bytes)
+    const taskId = await client.submit(submitName, submitBytes, payload, exec.signal)
+    progress?.update('已提交，等待服务处理…')
+    try {
+      const status = await waitForTask(
+        client, options, taskId, exec.signal, line => progress?.update(line),
+      )
+      if (status.error_flag) {
+        throw new DocuTranslateError(`translation failed: ${status.status_message}`, 'DT_TASK_FAILED')
+      }
+      const preferred = knownSource !== undefined
+        ? 'markdown'
+        : (args.workflowType !== undefined && workflowType !== 'auto'
+            ? workflowFor(workflowType)
+            : SOURCE_FILE_TYPE[extname(sourcePath).toLowerCase()] ?? inferFromStatus(status))
+      const fileType = pickAvailable(status, preferred)
+      progress?.update('下载译文…')
+      const file = await client.download(taskId, fileType, exec.signal)
+      const outputPath = resolveOutputPath(sourcePath, options, fileType, args.outputPath)
+      await writeFile(outputPath, file.bytes)
 
-    const prepared = await prepareReview(
-      client, exec, taskId, status, sourcePath, outputPath, targetLanguage, knownSource,
-    )
-    return {
-      taskId,
-      sourcePath,
-      outputPath,
-      compareHtmlPath: prepared.compareHtmlPath,
-      reviewSourcePath: prepared.reviewSourcePath,
-      reviewTranslationPath: prepared.reviewTranslationPath,
-      fileType,
-      targetLanguage,
-      reviewBrief: prepared.reviewBrief,
-      elapsedMs: Date.now() - started,
+      progress?.update('生成对照与复查材料…')
+      const prepared = await prepareReview(
+        client, exec, taskId, status, sourcePath, outputPath, targetLanguage, knownSource,
+      )
+      progress?.log(`完成：${basename(outputPath)}`)
+      progress?.finish()
+      return {
+        taskId,
+        sourcePath,
+        outputPath,
+        compareHtmlPath: prepared.compareHtmlPath,
+        reviewSourcePath: prepared.reviewSourcePath,
+        reviewTranslationPath: prepared.reviewTranslationPath,
+        fileType,
+        targetLanguage,
+        reviewBrief: prepared.reviewBrief,
+        elapsedMs: Date.now() - started,
+      }
+    } finally {
+      // The service keeps task state and temp files in memory; release is best effort.
+      await client.release(taskId).catch(() => undefined)
     }
+  } catch (error: unknown) {
+    progress?.fail(error instanceof Error ? error.message : String(error))
+    throw error
   } finally {
-    // The service keeps task state and temp files in memory; release is best effort.
-    await client.release(taskId).catch(() => undefined)
+    // Defensive: a cancellation path that throws before finish/fail still
+    // settles the display row instead of leaving it running.
+    progress?.finish()
   }
 }
 
@@ -322,10 +346,12 @@ async function waitForTask(
   options: ResolvedOptions,
   taskId: TaskId,
   signal: AbortSignal,
+  onProgress?: (line: string) => void,
 ): Promise<TaskStatus> {
   const deadline = Date.now() + options.taskTimeoutMs
   for (;;) {
     const status = await client.status(taskId, signal)
+    onProgress?.(`${status.progress_percent}% ${status.status_message}`.trim())
     if (status.download_ready || status.error_flag) return status
     if (!status.is_processing) return status
     if (Date.now() >= deadline) {
