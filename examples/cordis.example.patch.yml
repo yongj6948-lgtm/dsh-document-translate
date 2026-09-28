@@ -1,0 +1,27 @@
+# Example deployment layer for dsh-document-translate.
+#
+# Copy this file to `examples/cordis.local.patch.yml` — which is git-ignored —
+# and fill in your own service and LLM endpoints, then either pass it with
+# `dsh --profile <name> --patch examples/cordis.local.patch.yml` or copy the
+# rows into your profile's cordis.patch.yml. A patch replaces the whole row
+# config, so restate every key you want to keep.
+#
+# The values below are placeholders on purpose: no deployment endpoint, host,
+# or model id is committed to this repository. See the README "Configure"
+# section for the full field list and defaults.
+#
+# The translation LLM's API key is not stored here. Put it in the Harness
+# credential store under the name in `llmApiKeyEnv` (the plugin also falls back
+# to the launch environment). Any OpenAI-compatible endpoint works.
+#
+# The review does NOT appear here: after translating, the agent delegates the
+# returned `reviewBrief` to its own `subagent` tool, so the review model and
+# provider are the profile's normal subagent configuration.
+- id: document-translate
+  name: 'dsh-document-translate'
+  config:
+    baseURL: 'http://127.0.0.1:8010'
+    targetLang: '简体中文'
+    llmBaseURL: 'http://127.0.0.1:8000/v1'
+    llmModelId: 'your-openai-compatible-model'
+    llmApiKeyEnv: 'DOCUTRANSLATE_LLM_API_KEY'

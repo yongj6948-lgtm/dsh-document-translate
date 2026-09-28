@@ -2,3 +2,10 @@ node_modules/
 lib/
 *.log
 .DS_Store
+# Local deployment overrides (real endpoints/hosts). Copy the example first.
+examples/cordis.local.patch.yml
+*.local.patch.yml
+.env
+.env.*
+# Local working notes for AI agents — never published.
+AGENTS.md

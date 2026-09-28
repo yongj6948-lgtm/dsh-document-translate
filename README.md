@@ -7,7 +7,8 @@ comparison — then hands the agent a **review brief**. The agent delegates that
 `subagent` tool, so the review model and provider are the profile's normal subagent configuration,
 not a plugin concern.
 
-See [`AGENTS.md`](AGENTS.md) for the recon record, decisions, and roadmap.
+The plugin's internal design record, recon notes, and roadmap live in a local,
+unpublished `AGENTS.md` alongside the repository.
 
 ## What it does
 
@@ -61,7 +62,8 @@ a `pnpm pack` tarball.
 
 Every field is a live (`volatile`) Config field, editable from the built-in Plugins page or a
 `cordis.yml` layer. There are no hardcoded endpoints. See
-[`examples/cordis.local.patch.yml`](examples/cordis.local.patch.yml) for a deployment layer.
+[`examples/cordis.example.patch.yml`](examples/cordis.example.patch.yml) for a deployment layer
+(copy it to `examples/cordis.local.patch.yml`, which is git-ignored, and fill in your own endpoints).
 
 ```yaml
 - id: document-translate

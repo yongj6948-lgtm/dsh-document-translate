@@ -1,16 +1,17 @@
 /**
  * Live smoke against a running DocuTranslate service. Not part of the test
- * suite: it needs a reachable service (default http://127.0.0.1:8010).
+ * suite: it needs a reachable service.
  *
  *   node scripts/live-smoke.mjs [baseURL]
  *
- * By default it runs the no-LLM parse path (`skip_translate: true`) so the
- * submit → poll → download pipeline is verifiable without an LLM credential.
- * Set the three DOCUTRANSLATE_TEST_LLM_* variables to also run a real
- * translation:
+ * `baseURL` defaults to `$DOCUTRANSLATE_SERVICE_URL`, then
+ * `http://127.0.0.1:8010`. By default it runs the no-LLM parse path
+ * (`skip_translate: true`) so the submit → poll → download pipeline is
+ * verifiable without an LLM credential. Set the three DOCUTRANSLATE_TEST_LLM_*
+ * variables to also run a real translation:
  *
- *   DOCUTRANSLATE_TEST_LLM_BASE_URL=http://127.0.0.1:8888/v1 \
- *   DOCUTRANSLATE_TEST_LLM_API_KEY=local \
+ *   DOCUTRANSLATE_TEST_LLM_BASE_URL=http://127.0.0.1:8000/v1 \
+ *   DOCUTRANSLATE_TEST_LLM_API_KEY=... \
  *   DOCUTRANSLATE_TEST_LLM_MODEL_ID=your-model \
  *   node scripts/live-smoke.mjs
  */
