@@ -156,3 +156,19 @@ node scripts/live-smoke.mjs      # needs a reachable DocuTranslate service
 - **In-memory task state** — DocuTranslate keeps tasks in memory; a service restart invalidates
   `task_id` values recorded in sessions.
 - **Plaintext LAN transport** — deploy the service on a trusted network or behind TLS.
+
+## License
+
+[MIT](LICENSE) © yongj6948-lgtm.
+
+## Acknowledgements
+
+- **[DocuTranslate](https://github.com/xunbu/docutranslate)** by **QinHan** (MPL-2.0) — the
+  document-translation service this plugin drives. This plugin is an independent client: it talks to
+  DocuTranslate over its HTTP API and bundles none of its source, which is why it can ship under MIT.
+  Thanks for the service.
+- [`marked`](https://github.com/markedjs/marked),
+  [`@firecrawl/anydoc`](https://www.npmjs.com/package/@firecrawl/anydoc), and
+  [`@firecrawl/pdf-inspector`](https://www.npmjs.com/package/@firecrawl/pdf-inspector) — MIT.
+
+See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for details.
